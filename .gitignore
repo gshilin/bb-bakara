@@ -1,0 +1,5 @@
+*.sql
+*.mdb
+*.db
+bb-bakara
+.idea/**
