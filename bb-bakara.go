@@ -35,6 +35,7 @@ type Config struct {
 	dbAdapter    string
 	connString   string
 	sqlQuery     string
+	limitQuery   string
 	outputFile   string
 	mdbPath      string
 	doNotLoadMdb bool
@@ -44,7 +45,7 @@ func main() {
 	cfg := getConfig()
 
 	if !cfg.doNotLoadMdb {
-		loadDB(cfg.mdbPath, tables)
+		loadDB(cfg.mdbPath, tables, cfg)
 	}
 
 	calculateMoney(cfg)
@@ -53,11 +54,11 @@ func main() {
 func getConfig() *Config {
 
 	thisYear, thisMonth, _ := time.Now().Date()
-	var doNotLoadMdb = flag.Bool("x", false, "Path to an MDB file")
+	var doNotLoadMdb = flag.Bool("x", false, "Do not reload MDB file, use the existing data")
 	var mdbPath = flag.String("m", "ZKAccess.mdb", "Path to an MDB file")
 	var outputPath = flag.String("o", "", "Output file path and name ** mandatory **")
 	var month = flag.Int("d", int(thisMonth - 1), "Month to create report for")
-	var year = flag.Int("y", int(thisYear - 1), "Year to create report for")
+	var year = flag.Int("y", int(thisYear), "Year to create report for")
 	var pUser = flag.String("u", "postgres", "Postgres User")
 	var pPassword = flag.String("p", "postgres", "Postgres Password")
 	var pHost = flag.String("h", "localhost", "Postgres host")
@@ -78,6 +79,11 @@ func getConfig() *Config {
 		*pPassword = ":" + *pPassword
 	}
 
+	limitQ := fmt.Sprintf(`
+		DELETE FROM acc_monitor_log a
+		WHERE   time < '%d-%02d-01 00:00:00' OR time >= '%d-%02d-01 00:00:00';
+	`, *year, *month, *year, *month + 1)
+
 	query := fmt.Sprintf(`
 CREATE EXTENSION IF NOT EXISTS tablefunc;
 
@@ -89,7 +95,11 @@ WITH crosstab AS (
 					pin || ',' || card_no AS name,
 					time, device_name, event_point_name,
 					extract(dow from time)::integer AS dow,
-					to_char(time, 'HH24:MI') AS hm
+					to_char(time, 'HH24:MI') AS hm,
+					CASE
+						WHEN device_name = 'חדר אמנון פעיל קומה ' THEN 'amnon'
+						ELSE 'dinner'
+					END AS chip
 				FROM acc_monitor_log a
 				WHERE   time >= '%d-%02d-01 00:00:00' AND time < '%d-%02d-01 00:00:00'
 					and (
@@ -98,14 +108,22 @@ WITH crosstab AS (
 						(device_name = 'גלריה וכניסה' and event_point_name = 'ארוחת צהרים חדר אוכל')
 					)
 			)
+			/* dinner room counter */
 			SELECT name, 'breakfast' AS title, count(1) * 3 AS shekel FROM records
-			WHERE dow BETWEEN 0 AND 4 AND hm BETWEEN '02:00' AND '11:30' GROUP BY name
+			WHERE chip = 'dinner' AND dow BETWEEN 0 AND 4 AND hm BETWEEN '02:00' AND '11:30' GROUP BY name
 				UNION
 			SELECT name, 'dinner' AS title, count(1) * 14 AS shekel FROM records
-			WHERE dow BETWEEN 0 AND 4 AND hm BETWEEN '11:31' AND '18:00' GROUP BY name
+			WHERE chip = 'dinner' AND dow BETWEEN 0 AND 4 AND hm BETWEEN '11:31' AND '18:00' GROUP BY name
 				UNION
 			SELECT name, 'houmus' AS title, count(1) * 5 AS shekel FROM records
-			WHERE dow = 5 AND hm BETWEEN '02:00' AND '11:00' GROUP BY name
+			WHERE chip = 'dinner' AND dow = 5 AND hm BETWEEN '02:00' AND '11:00' GROUP BY name
+				UNION
+			/* amnon room counter */
+			SELECT name, 'breakfast' AS title, count(1) * 3 AS shekel FROM records
+			WHERE chip = 'amnon' AND dow BETWEEN 0 AND 4 AND hm BETWEEN '04:30' AND '07:00' GROUP BY name
+				UNION
+			SELECT name, 'houmus' AS title, count(1) * 5 AS shekel FROM records
+			WHERE chip = 'amnon' AND dow = 5 AND hm BETWEEN '04:30' AND '07:00' GROUP BY name
 		) meals ORDER BY name $$,
 		$$ VALUES ('breakfast'::text), ('dinner'::text), ('houmus'::text) $$
 	) AS (name TEXT, breakfast BIGINT, dinner BIGINT, houmus BIGINT)
@@ -138,13 +156,14 @@ ORDER BY ordinal ASC, "badge/tag" ASC;
 		dbAdapter: "postgres",
 		connString: fmt.Sprintf("postgres://%s%s@%s/zkaccess", *pUser, *pPassword, *pHost),
 		sqlQuery: query,
+		limitQuery: limitQ,
 		outputFile: *outputPath,
 		mdbPath: *mdbPath,
 		doNotLoadMdb: *doNotLoadMdb,
 	}
 }
 
-func loadDB(dbpath string, tables dbStruct) (err error) {
+func loadDB(dbpath string, tables dbStruct, cfg *Config) (err error) {
 
 	for table := range tables {
 		dbTable := strings.ToLower(table)
@@ -160,6 +179,14 @@ func loadDB(dbpath string, tables dbStruct) (err error) {
 			return
 		}
 	}
+
+	db, err := sqlx.Open(cfg.dbAdapter, cfg.connString)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+
+	db.Exec(cfg.limitQuery)
 
 	return
 }
@@ -199,6 +226,7 @@ func calculateMoney(cfg *Config) {
 	if err != nil {
 		log.Fatal(err)
 	}
+	defer db.Close()
 
 	results, err := db.Queryx(cfg.sqlQuery)
 
@@ -214,7 +242,7 @@ func calculateMoney(cfg *Config) {
 	}
 	row := sheet.AddRow()
 	columns, _ := results.Columns()
-	for _, h := range columns { //[]string{"מס כרטיס בהנה\"ח", "badge id, tag id", "שם מלא", "סעודות בוקר", "סעודות צהריים", "סעודת חומוס", "סה\"כ"} {
+	for _, h := range columns {
 		cell := row.AddCell()
 		cell.Value = h
 	}
@@ -226,7 +254,6 @@ func calculateMoney(cfg *Config) {
 		}
 
 		for _, col := range row {
-			//log.Print(reflect.TypeOf(col))
 			cell := xRow.AddCell()
 			switch col.(type) {
 			case float64:
