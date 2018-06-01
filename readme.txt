@@ -22,6 +22,9 @@ go build bb-bakara.go
 ./bb-bakara -x -d 01 -y 2018 -i /media/sf_projects/bb-bakaradb/reports/prices2018-01.xlsx -m /media/sf_projects/bb-bakaradb/ZKAccess.mdb -o /media/sf_projects/bb-bakaradb/reports/2018-01
 ./bb-bakara -d 02 -y 2018 -i /media/sf_projects/bb-bakaradb/reports/prices2018-02-09.xlsx -m /media/sf_projects/bb-bakaradb/ZKAccess.mdb -o /media/sf_projects/bb-bakaradb/reports/2018-02-09
 ./bb-bakara -xC -d 02 -y 2018 -i /media/sf_projects/bb-bakaradb/reports/prices2018-02.xlsx -m /media/sf_projects/bb-bakaradb/ZKAccess.mdb -o /media/sf_projects/bb-bakaradb/reports/2018-02
+./bb-bakara -d 03 -y 2018 -i /media/sf_projects/bb-bakaradb/reports/prices2018-03.xlsx -m /media/sf_projects/bb-bakaradb/ZKAccess.mdb -o /media/sf_projects/bb-bakaradb/reports/2018-03
+./bb-bakara -d 04 -y 2018 -i /media/sf_projects/bb-bakaradb/reports/prices2018-04.xlsx -m /media/sf_projects/bb-bakaradb/ZKAccess.mdb -o /media/sf_projects/bb-bakaradb/reports/2018-04
+./bb-bakara -d 05 -y 2018 -i /media/sf_projects/bb-bakaradb/reports/prices2018-05.xlsx -m /media/sf_projects/bb-bakaradb/ZKAccess.mdb -o /media/sf_projects/bb-bakaradb/reports/2018-05
 
 
 

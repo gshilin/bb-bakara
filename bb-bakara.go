@@ -14,8 +14,6 @@ import (
 	"strconv"
 )
 
-type persons_type map[string]int
-
 type dbStruct map[string][]string
 
 var tables = dbStruct{
@@ -65,7 +63,7 @@ func main() {
 	}
 
 	if !cfg.doNotCalculate {
-		calculate(cfg.mdbPath, tables, db, cfg)
+		calculate(db, cfg)
 		calculateMoney(db, cfg)
 		calculateTotalsPerMeal(db, cfg)
 		statistics(db, cfg)
@@ -84,6 +82,9 @@ var controllerMap = map[string]*controller{
 	"רחבה סעודות": {
 		controller: "ארועים",
 		chipName:   "רחבת סעודות 1",},
+	"Door 3: אירועים -3": {
+		controller: "ארועים",
+		chipName:   "ארועים-3",},
 	"רמפה": {
 		controller: "ארועים",
 		chipName:   "ק.0 מדרגות גימס סעודות",},
@@ -135,20 +136,20 @@ func execSql(db *sqlx.DB, sql string, message string) {
 func loadPrices(db *sqlx.DB, cfg *Config) {
 	const (
 		// 0 - ignored
-		excel_date      = 1
-		excel_day_name  = 2
-		excel_double    = 3
-		excel_youth     = 4
-		excel_meal_type = 5
-		excel_meal_name = 6
+		excelDate     = 1
+		excelDayName  = 2
+		excelDouble   = 3
+		excelYouth    = 4
+		excelMealType = 5
+		excelMealName = 6
 		// 7 - ignored
-		excel_hours      = 8
-		excel_controller = 9
-		excel_price      = 10
+		excelHours      = 8
+		excelController = 9
+		excelPrice      = 10
 		// 11 - ignored
-		excel_veg = 12
+		excelVeg = 12
 		// 13 - ignored
-		excel_kli = 14
+		excelKli = 14
 	)
 	printCommand("loadPrices", cfg.makor)
 	xlFile, err := xlsx.OpenFile(cfg.makor)
@@ -175,7 +176,9 @@ func loadPrices(db *sqlx.DB, cfg *Config) {
 			kli INTEGER
 		)`)
 	sheet := xlFile.Sheets[0]
+	lineno := 0
 	for _, row := range sheet.Rows {
+		lineno += 1
 		cells := row.Cells
 		//fmt.Println(cells)
 		if cells[1].Value == "" {
@@ -185,41 +188,41 @@ func loadPrices(db *sqlx.DB, cfg *Config) {
 			continue
 		}
 
-		day, _ := strconv.Atoi(cells[excel_date].Value)
-		dow, ok := daysMap[cells[excel_day_name].Value]
+		day, _ := strconv.Atoi(cells[excelDate].Value)
+		dow, ok := daysMap[cells[excelDayName].Value]
 		if !ok {
-			fmt.Errorf("### Unknown DOW: %s\n", cells[2].Value)
+			log.Fatal("Line: ", lineno, " ### Unknown DOW: ", cells[2].Value, "\n", row)
 			os.Exit(-1)
 		}
-		p2v := cells[excel_double].Value
+		p2v := cells[excelDouble].Value
 		if p2v != "כן" && p2v != "לא" {
-			fmt.Errorf("### Unknown p2: %s\n", p2v)
+			log.Fatal("Line: ", lineno, " ### Unknown p2: ", p2v, "\n", row)
 			os.Exit(-1)
 		}
 		p2 := p2v == "כן"
-		yv := cells[excel_youth].Value
+		yv := cells[excelYouth].Value
 		if yv != "כן" && yv != "לא" {
-			fmt.Errorf("### Unknown youth: %s\n", yv)
+			log.Fatal("Line: ", lineno, " ### Unknown youth: ", yv, "\n", row)
 			os.Exit(-1)
 		}
 		youth := yv == "כן"
-		income := strings.TrimSpace(strings.Replace(cells[excel_meal_type].Value, "'", "׳", -1))
-		label := strings.TrimSpace(strings.Replace(cells[excel_meal_name].Value, "'", "׳", -1))
+		income := strings.TrimSpace(strings.Replace(cells[excelMealType].Value, "'", "׳", -1))
+		label := strings.TrimSpace(strings.Replace(cells[excelMealName].Value, "'", "׳", -1))
 		if income == "" {
 			income = label
 		}
-		s := strings.Split(cells[excel_hours].Value, "-")
+		s := strings.Split(cells[excelHours].Value, "-")
 		start, end := strings.Replace(s[0], ".", ":", -1), strings.Replace(s[1], ".", ":", -1)
-		priceChip, _ := strconv.Atoi(cells[excel_price].Value)
-		priceVegetarian, _ := strconv.Atoi(cells[excel_veg].Value)
-		priceKli, _ := strconv.Atoi(cells[excel_kli].Value)
-		for _, chipName := range strings.Split(cells[excel_controller].Value, ";") {
+		priceChip, _ := strconv.Atoi(cells[excelPrice].Value)
+		priceVegetarian, _ := strconv.Atoi(cells[excelVeg].Value)
+		priceKli, _ := strconv.Atoi(cells[excelKli].Value)
+		for _, chipName := range strings.Split(cells[excelController].Value, ";") {
 			if chipName == "" {
 				continue
 			}
 			controller, ok := controllerMap[strings.TrimSpace(chipName)]
 			if !ok {
-				fmt.Errorf("### Unable to find chip: %s\n", chipName)
+				log.Fatal("Line: ", lineno, " ### Unable to find chip: ", chipName, "\n", row)
 				os.Exit(-1)
 			}
 			query := fmt.Sprintf(`
@@ -227,7 +230,7 @@ func loadPrices(db *sqlx.DB, cfg *Config) {
 				VALUES(%d, %d, %t, %t, '%s', '%s', '%s', '%s', '%s', '%s', %d, %d, %d);
 			`, day, dow, p2, youth, income, label, start, end, controller.controller, controller.chipName, priceChip, priceVegetarian, priceKli)
 			if _, err = db.Exec(query); err != nil {
-				log.Fatal("Query: ", query, "\n\nError: ", err)
+				log.Fatal("Line: ", lineno, " Query: ", query, "\n\nError: ", err)
 				os.Exit(-1)
 			}
 		}
@@ -318,7 +321,7 @@ func loadDB(dbpath string, tables dbStruct, db *sqlx.DB, cfg *Config) {
 	execSql(db, query, "Events")
 }
 
-func calculate(dbpath string, tables dbStruct, db *sqlx.DB, cfg *Config) {
+func calculate(db *sqlx.DB, cfg *Config) {
 
 	query := `
 		DROP TABLE IF EXISTS all_records;
@@ -337,6 +340,9 @@ func calculate(dbpath string, tables dbStruct, db *sqlx.DB, cfg *Config) {
 		-- ignore oraat keva
 		DELETE FROM all_records a WHERE a.dow = 5 AND a.fphone = '2' AND a.hm > '15:00';
 		DELETE FROM all_records a WHERE a.dow = 6 AND a.fphone = '2';
+		-- ignore Rav Laitman and Shimon Waintraub
+		DELETE FROM all_records a WHERE a.name = 'מיכאל' AND a.lastname = 'לייטמן';
+		DELETE FROM all_records a WHERE a.name = 'שמעון' AND a.lastname = 'ויינטראוב(לא משלם לסעודות';
 		`
 	execSql(db, query, "All records")
 
@@ -371,6 +377,7 @@ func calculate(dbpath string, tables dbStruct, db *sqlx.DB, cfg *Config) {
 						WHEN event_point_name = 'חדר אוכל קטן' THEN 'חדר אוכל'
 						WHEN event_point_name = 'רחבת סעודות 1' THEN 'רחבה סעודות'
 						WHEN event_point_name = 'ק.0 מדרגות גימס סעודות' THEN 'רמפה'
+						WHEN event_point_name = 'ארועים-3' THEN 'Door 3: אירועים -3'
 					END
 				WHEN device_name = 'חדר אמנון פעיל קומה ' THEN
 					CASE WHEN event_point_name = 'ק.0 ארועים מערב סעודות' THEN 'סעודות עולם אירועים מערב'
@@ -399,7 +406,7 @@ func calculate(dbpath string, tables dbStruct, db *sqlx.DB, cfg *Config) {
 		`, cfg.year, cfg.month, )
 	execSql(db, query, "Final results")
 
-	for_kolia, _ := db.Queryx(`
+	forKolia, _ := db.Queryx(`
 		SELECT day, hm, card_no, device_name, event_point_name
 		FROM events e
 		LEFT OUTER JOIN userinfo u ON u.badgenumber = e.pin OR u.cardno = e.card_no
@@ -407,7 +414,7 @@ func calculate(dbpath string, tables dbStruct, db *sqlx.DB, cfg *Config) {
 	`)
 	file := xlsx.NewFile()
 	defer file.Save(cfg.outputPath + "/for_kolia" + strconv.Itoa(cfg.month) + "-" + strconv.Itoa(cfg.year) + ".xlsx")
-	writeSheet(for_kolia, file)
+	writeSheet(forKolia, file)
 }
 
 func runCommand(description string, command string) {
@@ -499,6 +506,7 @@ func statistics(db *sqlx.DB, cfg *Config) {
 			CASE
 				WHEN event_point_name = 'חדר אוכל קטן' THEN 'חדר אוכל'
 				WHEN event_point_name = 'רחבת סעודות 1' THEN 'רחבה סעודות'
+				WHEN event_point_name = 'ארועים-3' THEN 'Door 3: אירועים -3'
 				WHEN event_point_name = 'ק.0 מדרגות גימס סעודות' THEN 'רמפה'
 				ELSE device_name || '--' || event_point_name
 			END
@@ -530,7 +538,7 @@ func statistics(db *sqlx.DB, cfg *Config) {
 	FROM acc_monitor_log
 	WHERE device_name IN ('ארועים', 'חדר אמנון פעיל קומה ', 'מסדרון רב', 'מדרגות  קומה 3 מערב ', 'מדרגות מזרח 3 נוכחות') AND
 	      event_point_name IN ('חדר אוכל קטן', 'רחבת סעודות 1', 'ק.0 מדרגות גימס סעודות', 'ק.0 ארועים מערב סעודות', 'ק.3 מזרח לובי - מסדרון',
-	      'סוכה 6','סוכה 5','סוכה 4','סוכה 3','סוכה 2','סוכה 1'
+	      'סוכה 6','סוכה 5','סוכה 4','סוכה 3','סוכה 2','סוכה 1', 'ארועים-3'
 	      )
 	)
 	SELECT count(device), device, device_name, event_point_name
