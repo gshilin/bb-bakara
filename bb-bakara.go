@@ -79,6 +79,9 @@ var controllerMap = map[string]*controller{
 	"חדר אוכל": {
 		controller: "ארועים",
 		chipName:   "חדר אוכל קטן",},
+	"ארוחת צהרים חדר אוכל": {
+		controller: "גלריה וכניסה",
+		chipName:   "ארוחת צהרים חדר אוכל",},
 	"רחבה סעודות": {
 		controller: "ארועים",
 		chipName:   "רחבת סעודות 1",},
@@ -91,6 +94,9 @@ var controllerMap = map[string]*controller{
 	"סעודות עולם אירועים מערב": {
 		controller: "חדר אמנון פעיל קומה ",
 		chipName:   "ק.0 ארועים מערב סעודות",},
+	"- newסעודות עולם אירועים מערב": {
+		controller: "קומה1 מעל חדר מחשבים",
+		chipName:   "סעודות אירועים מערב",},
 	"ק.3 .מזרכ לובי -מסדרון. מסדרון רב": {
 		controller: "מסדרון רב",
 		chipName:   "ק.3 מזרח לובי - מסדרון",},
@@ -233,6 +239,17 @@ func loadPrices(db *sqlx.DB, cfg *Config) {
 				log.Fatal("Line: ", lineno, " Query: ", query, "\n\nError: ", err)
 				os.Exit(-1)
 			}
+			if (controller.controller == "חדר אמנון פעיל קומה ") {
+				query := fmt.Sprintf(`
+				INSERT INTO prices (day, dow, p2, youth, income, meal, start, finish, controller, chip_name, price, vegetarian, kli)
+				VALUES(%d, %d, %t, %t, '%s', '%s', '%s', '%s', '%s', '%s', %d, %d, %d);
+			`, day, dow, p2, youth, income, label, start, end, "קומה1 מעל חדר מחשבים", "סעודות אירועים מערב", priceChip, priceVegetarian, priceKli)
+				if _, err = db.Exec(query); err != nil {
+					log.Fatal("Line: ", lineno, " Query: ", query, "\n\nError: ", err)
+					os.Exit(-1)
+				}
+
+			}
 		}
 	}
 }
@@ -372,6 +389,10 @@ func calculate(db *sqlx.DB, cfg *Config) {
 			CASE WHEN pager='1' THEN 'כן' ELSE '' END "צמחוני",
 			pin || ',' || card_no "מס' כרטיס/צ'יפ",
 			CASE
+				WHEN device_name = 'גלריה וכניסה' THEN
+					CASE
+						WHEN event_point_name = 'ארוחת צהרים חדר אוכל' THEN 'ארוחת צהרים חדר אוכל'
+					END
 				WHEN device_name = 'ארועים' THEN
 					CASE
 						WHEN event_point_name = 'חדר אוכל קטן' THEN 'חדר אוכל'
@@ -381,6 +402,9 @@ func calculate(db *sqlx.DB, cfg *Config) {
 					END
 				WHEN device_name = 'חדר אמנון פעיל קומה ' THEN
 					CASE WHEN event_point_name = 'ק.0 ארועים מערב סעודות' THEN 'סעודות עולם אירועים מערב'
+					END
+				WHEN device_name = 'קומה1 מעל חדר מחשבים' THEN
+					CASE WHEN event_point_name = 'סעודות אירועים מערב' THEN 'סעודות עולם אירועים מערב'
 					END
 				WHEN device_name = 'מסדרון רב' THEN
 					CASE
@@ -502,6 +526,10 @@ func statistics(db *sqlx.DB, cfg *Config) {
 	WITH a AS (
 	SELECT device_name, event_point_name,
 	CASE
+		WHEN device_name = 'גלריה וכניסה' THEN
+			CASE
+				WHEN event_point_name = 'ארוחת צהרים חדר אוכל' THEN 'ארוחת צהרים חדר אוכל'
+			END
 		WHEN device_name = 'ארועים' THEN
 			CASE
 				WHEN event_point_name = 'חדר אוכל קטן' THEN 'חדר אוכל'
@@ -513,6 +541,11 @@ func statistics(db *sqlx.DB, cfg *Config) {
 		WHEN device_name = 'חדר אמנון פעיל קומה ' THEN
 			CASE
 				WHEN event_point_name = 'ק.0 ארועים מערב סעודות' THEN 'סעודות עולם אירועים מערב'
+				ELSE device_name || '--' || event_point_name
+			END
+		WHEN device_name = 'קומה1 מעל חדר מחשבים' THEN
+			CASE
+				WHEN event_point_name = 'סעודות אירועים מערב' THEN 'סעודות עולם אירועים מערב'
 				ELSE device_name || '--' || event_point_name
 			END
 		WHEN device_name = 'מסדרון רב' THEN
@@ -536,9 +569,9 @@ func statistics(db *sqlx.DB, cfg *Config) {
 		ELSE device_name || '--' || event_point_name
 		END "device"
 	FROM acc_monitor_log
-	WHERE device_name IN ('ארועים', 'חדר אמנון פעיל קומה ', 'מסדרון רב', 'מדרגות  קומה 3 מערב ', 'מדרגות מזרח 3 נוכחות') AND
-	      event_point_name IN ('חדר אוכל קטן', 'רחבת סעודות 1', 'ק.0 מדרגות גימס סעודות', 'ק.0 ארועים מערב סעודות', 'ק.3 מזרח לובי - מסדרון',
-	      'סוכה 6','סוכה 5','סוכה 4','סוכה 3','סוכה 2','סוכה 1', 'ארועים-3'
+	WHERE device_name IN ('ארועים', 'חדר אמנון פעיל קומה ', 'קומה1 מעל חדר מחשבים', 'מסדרון רב', 'מדרגות  קומה 3 מערב ', 'מדרגות מזרח 3 נוכחות', 'גלריה וכניסה') AND
+	      event_point_name IN ('חדר אוכל קטן', 'רחבת סעודות 1', 'ק.0 מדרגות גימס סעודות', 'ק.0 ארועים מערב סעודות', 'ק.3 מזרח לובי - מסדרון', 'סעודות אירועים מערב',
+	      'סוכה 6','סוכה 5','סוכה 4','סוכה 3','סוכה 2','סוכה 1', 'ארועים-3','ארוחת צהרים חדר אוכל'
 	      )
 	)
 	SELECT count(device), device, device_name, event_point_name
@@ -639,7 +672,6 @@ func writeSheet(results *sqlx.Rows, file *xlsx.File) (err error) {
 	}
 
 	return
-
 }
 
 func openDb(adapter string, conn string) *sqlx.DB {
