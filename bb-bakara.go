@@ -1,17 +1,17 @@
 package main
 
 import (
-	"os"
-	"fmt"
-	"log"
-	"strings"
-	"os/exec"
-	_ "github.com/lib/pq"
-	"time"
 	"flag"
+	"fmt"
 	"github.com/jmoiron/sqlx"
+	_ "github.com/lib/pq"
 	"github.com/tealeg/xlsx"
+	"log"
+	"os"
+	"os/exec"
 	"strconv"
+	"strings"
+	"time"
 )
 
 type dbStruct map[string][]string
@@ -48,7 +48,7 @@ func main() {
 	cfg := getConfig()
 
 	db := openDb(cfg.dbAdapter, cfg.connString)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	// Prices *HAVE* to be loaded *BEFORE* db
 	if !cfg.noMakor {
@@ -134,7 +134,6 @@ func execSql(db *sqlx.DB, sql string, message string) {
 	_, err := db.Exec(sql)
 	if err != nil {
 		log.Fatal(message, err)
-		os.Exit(-1)
 	}
 
 }
@@ -161,11 +160,10 @@ func loadPrices(db *sqlx.DB, cfg *Config) {
 	xlFile, err := xlsx.OpenFile(cfg.makor)
 	if err != nil {
 		log.Fatal(err)
-		os.Exit(-1)
 	}
 
-	db.Exec("DROP TABLE IF EXISTS prices;")
-	db.Exec(`
+	_, _ = db.Exec("DROP TABLE IF EXISTS prices;")
+	_, _ = db.Exec(`
 		CREATE TABLE prices (
 			day INTEGER,
 			dow INTEGER,
@@ -198,18 +196,15 @@ func loadPrices(db *sqlx.DB, cfg *Config) {
 		dow, ok := daysMap[cells[excelDayName].Value]
 		if !ok {
 			log.Fatal("Line: ", lineno, " ### Unknown DOW: ", cells[2].Value, "\n", row)
-			os.Exit(-1)
 		}
 		p2v := cells[excelDouble].Value
 		if p2v != "כן" && p2v != "לא" {
 			log.Fatal("Line: ", lineno, " ### Unknown p2: ", p2v, "\n", row)
-			os.Exit(-1)
 		}
 		p2 := p2v == "כן"
 		yv := cells[excelYouth].Value
 		if yv != "כן" && yv != "לא" {
 			log.Fatal("Line: ", lineno, " ### Unknown youth: ", yv, "\n", row)
-			os.Exit(-1)
 		}
 		youth := yv == "כן"
 		income := strings.TrimSpace(strings.Replace(cells[excelMealType].Value, "'", "׳", -1))
@@ -229,7 +224,6 @@ func loadPrices(db *sqlx.DB, cfg *Config) {
 			controller, ok := controllerMap[strings.TrimSpace(chipName)]
 			if !ok {
 				log.Fatal("Line: ", lineno, " ### Unable to find chip: ", chipName, "\n", row)
-				os.Exit(-1)
 			}
 			query := fmt.Sprintf(`
 				INSERT INTO prices (day, dow, p2, youth, income, meal, start, finish, controller, chip_name, price, vegetarian, kli)
@@ -237,16 +231,14 @@ func loadPrices(db *sqlx.DB, cfg *Config) {
 			`, day, dow, p2, youth, income, label, start, end, controller.controller, controller.chipName, priceChip, priceVegetarian, priceKli)
 			if _, err = db.Exec(query); err != nil {
 				log.Fatal("Line: ", lineno, " Query: ", query, "\n\nError: ", err)
-				os.Exit(-1)
 			}
-			if (controller.controller == "חדר אמנון פעיל קומה ") {
+			if controller.controller == "חדר אמנון פעיל קומה " {
 				query := fmt.Sprintf(`
 				INSERT INTO prices (day, dow, p2, youth, income, meal, start, finish, controller, chip_name, price, vegetarian, kli)
 				VALUES(%d, %d, %t, %t, '%s', '%s', '%s', '%s', '%s', '%s', %d, %d, %d);
 			`, day, dow, p2, youth, income, label, start, end, "קומה1 מעל חדר מחשבים", "סעודות אירועים מערב", priceChip, priceVegetarian, priceKli)
 				if _, err = db.Exec(query); err != nil {
 					log.Fatal("Line: ", lineno, " Query: ", query, "\n\nError: ", err)
-					os.Exit(-1)
 				}
 
 			}
@@ -307,12 +299,12 @@ func loadDB(dbpath string, tables dbStruct, db *sqlx.DB, cfg *Config) {
 	for table := range tables {
 		dbTable := strings.ToLower(table)
 
-		db.Exec("ALTER SEQUENCE " + dbTable + "_" + tables[table][0] + "_seq RESTART WITH 1;")
+		_, _ = db.Exec("ALTER SEQUENCE " + dbTable + "_" + tables[table][0] + "_seq RESTART WITH 1;")
 
 		runCommand("Create table "+table,
 			"mdb-schema --drop-table -T "+table+" "+dbpath+" postgres | fgrep -v 'ADD CONSTRAINT' | tr '[:upper:]' '[:lower:]' | psql -U postgres -d zkaccess")
 		runCommand("Import table "+table,
-			"mdb-export -H -q \\\" -D '%Y-%m-%d %H:%M:%S' "+dbpath+" "+table+"| psql -U postgres -d zkaccess -c 'COPY "+dbTable+" FROM STDIN CSV'")
+			"mdb-export -H -q \\\" -D '%d-%m-%Y %H:%M:%S' "+dbpath+" "+table+"| psql -U postgres -d zkaccess -c 'COPY "+dbTable+" FROM STDIN CSV'")
 	}
 
 	// keep only records that belong to our time range
@@ -330,11 +322,12 @@ func loadDB(dbpath string, tables dbStruct, db *sqlx.DB, cfg *Config) {
 			to_char(time, 'HH24:MI') AS hm
 		INTO events
 		FROM acc_monitor_log
-		WHERE false
+		WHERE (false
 	`
 	for _, v := range controllerMap {
 		query += fmt.Sprintf(` OR (device_name = '%s' AND event_point_name = '%s')`, v.controller, v.chipName)
 	}
+	query += ") AND device_sn IS NOT NULL"
 	execSql(db, query, "Events")
 }
 
@@ -437,8 +430,8 @@ func calculate(db *sqlx.DB, cfg *Config) {
 		WHERE (coalesce(u.name, '') || ' ' || coalesce(u.lastname, '')) = ' '
 	`)
 	file := xlsx.NewFile()
-	defer file.Save(cfg.outputPath + "/for_kolia" + strconv.Itoa(cfg.month) + "-" + strconv.Itoa(cfg.year) + ".xlsx")
-	writeSheet(forKolia, file)
+	defer func() { _ = file.Save(cfg.outputPath + "/for_kolia" + strconv.Itoa(cfg.month) + "-" + strconv.Itoa(cfg.year) + ".xlsx") }()
+	_ = writeSheet(forKolia, file)
 }
 
 func runCommand(description string, command string) {
@@ -458,7 +451,7 @@ func printCommand(meaning string, command string) {
 
 func printError(err error) {
 	if err != nil {
-		os.Stderr.WriteString(fmt.Sprintf("==> Error: %s\n", err.Error()))
+		_, _ = os.Stderr.WriteString(fmt.Sprintf("==> Error: %s\n", err.Error()))
 	}
 }
 
@@ -491,13 +484,12 @@ func calculateTotalsPerMeal(db *sqlx.DB, cfg *Config) {
 	`)
 	if err != nil {
 		log.Fatal(err)
-		os.Exit(-1)
 	}
 
 	file := xlsx.NewFile()
-	defer file.Save(cfg.outputPath + "/meals" + strconv.Itoa(cfg.month) + "-" + strconv.Itoa(cfg.year) + ".xlsx")
+	defer func() { _ = file.Save(cfg.outputPath + "/meals" + strconv.Itoa(cfg.month) + "-" + strconv.Itoa(cfg.year) + ".xlsx") }()
 
-	writeSheet(results, file)
+	_ = writeSheet(results, file)
 
 }
 
@@ -510,13 +502,12 @@ func calculateMoney(db *sqlx.DB, cfg *Config) {
 	`)
 	if err != nil {
 		log.Fatal(err)
-		os.Exit(-1)
 	}
 
 	file := xlsx.NewFile()
-	defer file.Save(cfg.outputPath + "/report" + strconv.Itoa(cfg.month) + "-" + strconv.Itoa(cfg.year) + ".xlsx")
+	defer func() { _ = file.Save(cfg.outputPath + "/report" + strconv.Itoa(cfg.month) + "-" + strconv.Itoa(cfg.year) + ".xlsx") }()
 
-	writeSheet(results, file)
+	_ = writeSheet(results, file)
 }
 
 func statistics(db *sqlx.DB, cfg *Config) {
@@ -580,13 +571,12 @@ func statistics(db *sqlx.DB, cfg *Config) {
 	`)
 	if err != nil {
 		log.Fatal(err)
-		os.Exit(-1)
 	}
 
 	file := xlsx.NewFile()
-	defer file.Save(cfg.outputPath + "/chip_reader" + strconv.Itoa(cfg.month) + "-" + strconv.Itoa(cfg.year) + ".xlsx")
+	defer func() { _ = file.Save(cfg.outputPath + "/chip_reader" + strconv.Itoa(cfg.month) + "-" + strconv.Itoa(cfg.year) + ".xlsx") }()
 
-	writeSheet(results, file)
+	_ = writeSheet(results, file)
 
 	// Price per "מס כרטיס בהנה""ח"
 	results, err = db.Queryx(`
@@ -618,20 +608,18 @@ func statistics(db *sqlx.DB, cfg *Config) {
 	`)
 	if err != nil {
 		log.Fatal(err)
-		os.Exit(-1)
 	}
 
 	file1 := xlsx.NewFile()
-	defer file1.Save(cfg.outputPath + "/totals" + strconv.Itoa(cfg.month) + "-" + strconv.Itoa(cfg.year) + ".xlsx")
+	defer func() { _ = file1.Save(cfg.outputPath + "/totals" + strconv.Itoa(cfg.month) + "-" + strconv.Itoa(cfg.year) + ".xlsx") }()
 
-	writeSheet(results, file1)
+	_ = writeSheet(results, file1)
 }
 
 func writeSheet(results *sqlx.Rows, file *xlsx.File) (err error) {
 	sheet, err := file.AddSheet("Sheet1") // col bestFit="1"
 	if err != nil {
 		log.Fatal(err)
-		os.Exit(-1)
 	}
 
 	row := sheet.AddRow()
@@ -645,7 +633,6 @@ func writeSheet(results *sqlx.Rows, file *xlsx.File) (err error) {
 		row, err := results.SliceScan()
 		if err != nil {
 			log.Fatal(err)
-			os.Exit(-1)
 		}
 
 		for _, col := range row {
@@ -679,7 +666,6 @@ func openDb(adapter string, conn string) *sqlx.DB {
 	db, err := sqlx.Open(adapter, conn)
 	if err != nil {
 		log.Fatal(err)
-		os.Exit(-1)
 	}
 
 	return db
